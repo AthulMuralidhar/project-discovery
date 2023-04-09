@@ -9,6 +9,8 @@ use panic_halt as _;
 
 #[entry]
 fn main() -> ! {
+    // the mut board is the entire board of microbit v2 - the BSP aka Board Support Package which abstracts away the entire board
+    
     let mut board = Board::take().unwrap();
     
     board.display_pins.col1.set_low().unwrap();
