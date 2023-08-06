@@ -1,8 +1,6 @@
 #![no_main]
 #![no_std]
 
-mod serial_setup;
-
 use cortex_m_rt::entry;
 use rtt_target::{rtt_init_print, rprintln};
 use panic_rtt_target as _;
@@ -14,7 +12,13 @@ use microbit::{
     hal::uarte,
     hal::uarte::{Baudrate, Parity},
 };
-use lsm303agr::{AccelOutputDataRate, Lsm303agr};
+use microbit::hal::prelude::*;
+use lsm303agr::{AccelOutputDataRate, MagOutputDataRate, Lsm303agr};
+use heapless::Vec;
+use nb::block;
+use core::fmt::Write;
+mod serial_setup;
+use core::str;
 
 // The challenge for this chapter is, to build a small application that communicates with the outside world via the serial interface introduced in the last chapter. It should be able to receive the commands "magnetometer" as well as "accelerometer" and then print the corresponding sensor data in response. This time no template code will be provided since all you need is already provided in the UART and this chapter. However, here are a few clues:
 //
@@ -44,15 +48,39 @@ fn main() -> ! {
     let mut sensor = Lsm303agr::new_with_i2c(i2c);
     sensor.init().unwrap();
     sensor.set_accel_odr(AccelOutputDataRate::Hz50).unwrap();
+    sensor.set_mag_odr(MagOutputDataRate::Hz50).unwrap();
+
+    let mut sensor = sensor.into_mag_continuous().ok().unwrap();
 
     loop {
+        let mut buffer: Vec<u8, 32> = Vec::new();
 
-        if sensor.accel_status().unwrap().xyz_new_data {
-            let data = sensor.accel_data().unwrap();
-            rprintln!("acceleration: x: {}, y: {}, z: {}", data.x, data.y, data.z);
-            write!(serial, "acceleration: x: {}, y: {}, z: {}", data.x, data.y, data.z).unwrap();
+        loop {
+            let byte = block!(serial.read()).unwrap();
+            
+            if byte == 13 {
+                break;
+            }
+
+            if buffer.push(byte).is_err() {
+                write!(serial, "error: buffer full\r\n").unwrap();
+                break;
+            }
         }
-        nb::block!(serial.flush()).unwrap();
+
+        if str::from_utf8(&buffer).unwrap().trim() == "accelerometer" {
+            while !sensor.accel_status().unwrap().xyz_new_data {}
+
+            let data = sensor.accel_data().unwrap();
+            write!(serial, "Accelerometer: x {} y {} z {}\r\n", data.x, data.y, data.z).unwrap();
+        } else if str::from_utf8(&buffer).unwrap().trim() == "magnetometer" {
+            while !sensor.mag_status().unwrap().xyz_new_data {}
+
+            let data = sensor.mag_data().unwrap();
+            write!(serial, "Magnetometer: x {} y {} z {}\r\n", data.x, data.y, data.z).unwrap();
+        } else {
+            write!(serial, "error: command not detected\r\n").unwrap();
+        }
 
     }
 }
